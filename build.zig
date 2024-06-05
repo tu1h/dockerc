@@ -46,7 +46,7 @@ pub fn build(b: *std.Build) void {
         "-s -extldflags '-static'",
         "-o",
     });
-    umoci.setCwd(std.Build.LazyPath.relative("umoci"));
+    umoci.setCwd(b.path("umoci"));
     const umoci_output = umoci.addOutputFileArg("umoci");
     umoci.addArg("github.com/opencontainers/umoci/cmd/umoci");
     umoci.setEnvironmentVariable(
@@ -65,7 +65,7 @@ pub fn build(b: *std.Build) void {
         "containers_image_openpgp",
         "-o",
     });
-    skopeo.setCwd(std.Build.LazyPath.relative("skopeo"));
+    skopeo.setCwd(b.path("skopeo"));
     const skopeo_output = skopeo.addOutputFileArg("skopeo");
     skopeo.addArg("./cmd/skopeo");
     
