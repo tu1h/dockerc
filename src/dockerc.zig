@@ -9,7 +9,7 @@ const debug = std.debug;
 
 const io = std.io;
 
-const skopeo_content = @embedFile("tools/skopeo");
+const skopeo_content = @embedFile("skopeo");
 const mksquashfs_content = @embedFile("tools/mksquashfs");
 const umoci_content = @embedFile("umoci");
 
