@@ -1,6 +1,15 @@
 const std = @import("std");
 
-pub extern fn mkdtemp(in: [*:0]const u8) ?[*:0]const u8;
+const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+pub fn mkdtemp(in: []u8) !void {
+    try std.posix.getrandom(in[in.len - 6..]);
+    for (in[in.len - 6..]) |*v| {
+        v.* = letters[v.* % letters.len];
+    }
+
+    try std.posix.mkdir(in, 0o700);
+}
 
 // TODO: ideally we can use memfd_create
 // The problem is that zig doesn't have fexecve support by default so it would

@@ -171,12 +171,13 @@ pub fn main() !void {
     var args = std.process.args();
     const executable_path = args.next() orelse unreachable;
 
-    const temp_dir_path = std.mem.span(mkdtemp("/tmp/dockerc-XXXXXX") orelse @panic("failed to create temp dir"));
+    var temp_dir_path = "/tmp/dockerc-XXXXXX".*;
+    try mkdtemp(&temp_dir_path);
 
-    const squashfuse_path = try extract_file(temp_dir_path, "squashfuse", squashfuse_content, allocator);
+    const squashfuse_path = try extract_file(&temp_dir_path, "squashfuse", squashfuse_content, allocator);
     defer allocator.free(squashfuse_path);
 
-    const overlayfs_path = try extract_file(temp_dir_path, "fuse-overlayfs", overlayfs_content, allocator);
+    const overlayfs_path = try extract_file(&temp_dir_path, "fuse-overlayfs", overlayfs_content, allocator);
     defer allocator.free(overlayfs_path);
 
     const filesystem_bundle_dir_null = try std.fmt.allocPrintZ(allocator, "{s}/{s}", .{ temp_dir_path, "bundle.squashfs" });
@@ -192,7 +193,7 @@ pub fn main() !void {
 
     const args_buf = [_][]const u8{ squashfuse_path, "-o", offsetArg, executable_path, filesystem_bundle_dir_null };
 
-    var mountProcess = std.ChildProcess.init(&args_buf, allocator);
+    var mountProcess = std.process.Child.init(&args_buf, allocator);
     _ = try mountProcess.spawnAndWait();
 
     const overlayfs_options = try std.fmt.allocPrint(allocator, "lowerdir={s},upperdir={s}/upper,workdir={s}/work", .{
@@ -205,13 +206,13 @@ pub fn main() !void {
     const container = container: {
         // Indent so that handles to files in mounted dir are closed by the end
         // to avoid umounting from being blocked.
-        var tmpDir = try std.fs.openDirAbsolute(temp_dir_path, .{});
+        var tmpDir = try std.fs.openDirAbsolute(&temp_dir_path, .{});
         defer tmpDir.close();
         try tmpDir.makeDir("upper");
         try tmpDir.makeDir("work");
         try tmpDir.makeDir("mount");
 
-        var overlayfsProcess = std.ChildProcess.init(&[_][]const u8{ overlayfs_path, "-o", overlayfs_options, mount_dir_path }, allocator);
+        var overlayfsProcess = std.process.Child.init(&[_][]const u8{ overlayfs_path, "-o", overlayfs_options, mount_dir_path }, allocator);
         _ = try overlayfsProcess.spawnAndWait();
 
         const rootfs_absolute_path = try std.fmt.allocPrint(allocator, "{s}/mount/rootfs", .{temp_dir_path});
@@ -252,10 +253,10 @@ pub fn main() !void {
         }
     }
 
-    var umountOverlayProcess = std.ChildProcess.init(&[_][]const u8{ "umount", mount_dir_path }, allocator);
+    var umountOverlayProcess = std.process.Child.init(&[_][]const u8{ "umount", mount_dir_path }, allocator);
     _ = try umountOverlayProcess.spawnAndWait();
 
-    var umountProcess = std.ChildProcess.init(&[_][]const u8{ "umount", filesystem_bundle_dir_null }, allocator);
+    var umountProcess = std.process.Child.init(&[_][]const u8{ "umount", filesystem_bundle_dir_null }, allocator);
     _ = try umountProcess.spawnAndWait();
 
     // TODO: clean up /tmp

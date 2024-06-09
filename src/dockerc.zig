@@ -27,19 +27,20 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
 
-    const temp_dir_path = std.mem.span(mkdtemp("/tmp/dockerc-XXXXXX") orelse @panic("failed to create temp dir"));
+    var temp_dir_path = "/tmp/dockerc-XXXXXX".*;
+    try mkdtemp(&temp_dir_path);
 
     const allocator = gpa.allocator();
-    const skopeo_path = try extract_file(temp_dir_path, "skopeo", skopeo_content, allocator);
+    const skopeo_path = try extract_file(&temp_dir_path, "skopeo", skopeo_content, allocator);
     defer allocator.free(skopeo_path);
 
-    const umoci_path = try extract_file(temp_dir_path, "umoci", umoci_content, allocator);
+    const umoci_path = try extract_file(&temp_dir_path, "umoci", umoci_content, allocator);
     defer allocator.free(umoci_path);
 
-    const mksquashfs_path = try extract_file(temp_dir_path, "mksquashfs", mksquashfs_content, allocator);
+    const mksquashfs_path = try extract_file(&temp_dir_path, "mksquashfs", mksquashfs_content, allocator);
     defer allocator.free(mksquashfs_path);
 
-    const policy_path = try extract_file(temp_dir_path, "policy.json", policy_content, allocator);
+    const policy_path = try extract_file(&temp_dir_path, "policy.json", policy_content, allocator);
     defer allocator.free(policy_path);
 
     const params = comptime clap.parseParamsComptime(
@@ -89,7 +90,7 @@ pub fn main() !void {
     const destination_arg = try std.fmt.allocPrint(allocator, "oci:{s}/image:latest", .{temp_dir_path});
     defer allocator.free(destination_arg);
 
-    var skopeoProcess = std.ChildProcess.init(&[_][]const u8{ skopeo_path, "copy", "--policy", policy_path, image, destination_arg }, gpa.allocator());
+    var skopeoProcess = std.process.Child.init(&[_][]const u8{ skopeo_path, "copy", "--policy", policy_path, image, destination_arg }, gpa.allocator());
     _ = try skopeoProcess.spawnAndWait();
 
     const umoci_image_layout_path = try std.fmt.allocPrint(allocator, "{s}/image:latest", .{temp_dir_path});
@@ -106,13 +107,13 @@ pub fn main() !void {
         bundle_destination,
         "--rootless",
     };
-    var umociProcess = std.ChildProcess.init(if (res.args.rootfull == 0) &umoci_args else umoci_args[0 .. umoci_args.len - 1], gpa.allocator());
+    var umociProcess = std.process.Child.init(if (res.args.rootfull == 0) &umoci_args else umoci_args[0 .. umoci_args.len - 1], gpa.allocator());
     _ = try umociProcess.spawnAndWait();
 
     const offset_arg = try std.fmt.allocPrint(allocator, "{}", .{runtime_content.len});
     defer allocator.free(offset_arg);
 
-    var mksquashfsProcess = std.ChildProcess.init(&[_][]const u8{
+    var mksquashfsProcess = std.process.Child.init(&[_][]const u8{
         mksquashfs_path,
         bundle_destination,
         output_path,

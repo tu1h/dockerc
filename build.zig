@@ -24,7 +24,7 @@ pub fn build(b: *std.Build) void {
 
     const runtime = b.addExecutable(.{
         .name = "runtime",
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
@@ -108,7 +108,7 @@ pub fn build(b: *std.Build) void {
 
     const dockerc = b.addExecutable(.{
         .name = "dockerc",
-        .root_source_file = .{ .path = "src/dockerc.zig" },
+        .root_source_file = b.path("src/dockerc.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
