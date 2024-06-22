@@ -46,4 +46,4 @@ $ zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-linux-musl
 [1]: https://github.com/containers/skopeo/blob/main/docs/skopeo.1.md#image-names
 [2]: https://docs.docker.com/reference/cli/docker/container/run/#env
 [3]: https://docs.docker.com/reference/cli/docker/container/run/#volume
-[4]: https://twitter.com/liz_love_lace/status/1759276265906061616
+[4]: https://www.reddit.com/r/github/comments/1at9br4/i_am_new_to_github_and_i_have_lots_to_say/
