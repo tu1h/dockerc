@@ -7,3 +7,9 @@
 [submodule "crun"]
 	path = crun
 	url = https://github.com/containers/crun.git
+[submodule "squashfs-tools"]
+	path = squashfs-tools
+	url = https://github.com/plougher/squashfs-tools.git
+[submodule "zstd"]
+	path = zstd
+	url = https://github.com/facebook/zstd.git

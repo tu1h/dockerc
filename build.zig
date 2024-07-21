@@ -114,6 +114,74 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
 
+    dockerc.addIncludePath(b.path("zstd/lib"));
+    dockerc.addCSourceFiles(.{
+        .files = &[_][]const u8{
+            "zstd/lib/common/debug.c",
+            "zstd/lib/common/entropy_common.c",
+            "zstd/lib/common/error_private.c",
+            "zstd/lib/common/fse_decompress.c",
+            "zstd/lib/common/pool.c",
+            "zstd/lib/common/threading.c",
+            "zstd/lib/common/xxhash.c",
+            "zstd/lib/common/zstd_common.c",
+
+            "zstd/lib/compress/fse_compress.c",
+            "zstd/lib/compress/hist.c",
+            "zstd/lib/compress/huf_compress.c",
+            "zstd/lib/compress/zstd_compress.c",
+            "zstd/lib/compress/zstd_compress_literals.c",
+            "zstd/lib/compress/zstd_compress_sequences.c",
+            "zstd/lib/compress/zstd_compress_superblock.c",
+            "zstd/lib/compress/zstd_double_fast.c",
+            "zstd/lib/compress/zstd_fast.c",
+            "zstd/lib/compress/zstd_lazy.c",
+            "zstd/lib/compress/zstd_ldm.c",
+            "zstd/lib/compress/zstdmt_compress.c",
+            "zstd/lib/compress/zstd_opt.c",
+
+            "zstd/lib/decompress/huf_decompress.c",
+            "zstd/lib/decompress/zstd_ddict.c",
+            "zstd/lib/decompress/zstd_decompress_block.c",
+            "zstd/lib/decompress/zstd_decompress.c",
+
+            "squashfs-tools/squashfs-tools/mksquashfs.c",
+            "squashfs-tools/squashfs-tools/progressbar.c",
+            "squashfs-tools/squashfs-tools/caches-queues-lists.c",
+            "squashfs-tools/squashfs-tools/date.c",
+            "squashfs-tools/squashfs-tools/pseudo.c",
+            "squashfs-tools/squashfs-tools/action.c",
+            "squashfs-tools/squashfs-tools/sort.c",
+            "squashfs-tools/squashfs-tools/restore.c",
+            "squashfs-tools/squashfs-tools/info.c",
+            "squashfs-tools/squashfs-tools/mksquashfs_help.c",
+            "squashfs-tools/squashfs-tools/print_pager.c",
+            "squashfs-tools/squashfs-tools/compressor.c",
+            "squashfs-tools/squashfs-tools/tar.c",
+            "squashfs-tools/squashfs-tools/reader.c",
+            "squashfs-tools/squashfs-tools/read_fs.c",
+            "squashfs-tools/squashfs-tools/memory.c",
+            "squashfs-tools/squashfs-tools/process_fragments.c",
+            "squashfs-tools/squashfs-tools/zstd_wrapper.c",
+        },
+        .flags = &[_][]const u8{
+            // avoid collision of main function
+            "-Dmain=mksquashfs_main",
+            // zstd: asm is only used for decompression so it is fine to disable
+            "-DZSTD_DISABLE_ASM",
+            // squashfs defines
+            "-DZSTD_SUPPORT",
+            "-D_GNU_SOURCE",
+            "-DVERSION=\"dockerc\"",
+            "-DDATE=\"2024/07/21\"",
+            "-DYEAR=\"2024\"",
+            "-DCOMP_DEFAULT=\"zstd\"",
+            "-DCOMPRESSORS=\"zstd\"",
+            // There's UB in squashfs. This deals with it.
+            "-fno-sanitize=undefined",
+        },
+    });
+
     dockerc.root_module.addAnonymousImport(
         "runtime",
         .{ .root_source_file = runtime.getEmittedBin() },

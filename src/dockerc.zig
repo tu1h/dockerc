@@ -10,7 +10,6 @@ const debug = std.debug;
 const io = std.io;
 
 const skopeo_content = @embedFile("skopeo");
-const mksquashfs_content = @embedFile("tools/mksquashfs");
 const umoci_content = @embedFile("umoci");
 
 const policy_content = @embedFile("tools/policy.json");
@@ -22,6 +21,8 @@ const runtime_content_len_u64 = data: {
     std.mem.writeInt(u64, &buf, runtime_content.len, .big);
     break :data buf;
 };
+
+extern fn mksquashfs_main(argc: c_int, argv: [*:null]const ?[*:0]const u8) void;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -36,9 +37,6 @@ pub fn main() !void {
 
     const umoci_path = try extract_file(&temp_dir_path, "umoci", umoci_content, allocator);
     defer allocator.free(umoci_path);
-
-    const mksquashfs_path = try extract_file(&temp_dir_path, "mksquashfs", mksquashfs_content, allocator);
-    defer allocator.free(mksquashfs_path);
 
     const policy_path = try extract_file(&temp_dir_path, "policy.json", policy_content, allocator);
     defer allocator.free(policy_path);
@@ -85,7 +83,8 @@ pub fn main() !void {
 
     // safe to assert because checked above
     const image = res.args.image.?;
-    const output_path = res.args.output.?;
+    const output_path = try allocator.dupeZ(u8, res.args.output.?);
+    defer allocator.free(output_path);
 
     const destination_arg = try std.fmt.allocPrint(allocator, "oci:{s}/image:latest", .{temp_dir_path});
     defer allocator.free(destination_arg);
@@ -96,7 +95,7 @@ pub fn main() !void {
     const umoci_image_layout_path = try std.fmt.allocPrint(allocator, "{s}/image:latest", .{temp_dir_path});
     defer allocator.free(umoci_image_layout_path);
 
-    const bundle_destination = try std.fmt.allocPrint(allocator, "{s}/bundle", .{temp_dir_path});
+    const bundle_destination = try std.fmt.allocPrintZ(allocator, "{s}/bundle", .{temp_dir_path});
     defer allocator.free(bundle_destination);
 
     const umoci_args = [_][]const u8{
@@ -110,11 +109,11 @@ pub fn main() !void {
     var umociProcess = std.process.Child.init(if (res.args.rootfull == 0) &umoci_args else umoci_args[0 .. umoci_args.len - 1], gpa.allocator());
     _ = try umociProcess.spawnAndWait();
 
-    const offset_arg = try std.fmt.allocPrint(allocator, "{}", .{runtime_content.len});
+    const offset_arg = try std.fmt.allocPrintZ(allocator, "{}", .{runtime_content.len});
     defer allocator.free(offset_arg);
 
-    var mksquashfsProcess = std.process.Child.init(&[_][]const u8{
-        mksquashfs_path,
+    const mksquashfs_args = [_:null]?[*:0]const u8{
+        "mksquashfs",
         bundle_destination,
         output_path,
         "-comp",
@@ -122,8 +121,12 @@ pub fn main() !void {
         "-offset",
         offset_arg,
         "-noappend",
-    }, gpa.allocator());
-    _ = try mksquashfsProcess.spawnAndWait();
+    };
+
+    mksquashfs_main(
+        mksquashfs_args.len,
+        &mksquashfs_args,
+    );
 
     const file = try std.fs.cwd().openFile(output_path, .{
         .mode = .write_only,
