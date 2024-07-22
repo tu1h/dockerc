@@ -13,3 +13,9 @@
 [submodule "zstd"]
 	path = zstd
 	url = https://github.com/facebook/zstd.git
+[submodule "squashfuse"]
+	path = squashfuse
+	url = https://github.com/vasi/squashfuse.git
+[submodule "fuse-overlayfs"]
+	path = fuse-overlayfs
+	url = https://github.com/containers/fuse-overlayfs.git

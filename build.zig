@@ -17,6 +17,140 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    const zstd = b.addStaticLibrary(.{
+        .name = "zstd",
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    zstd.addAssemblyFile(b.path("zstd/lib/decompress/huf_decompress_amd64.S"));
+    zstd.addCSourceFiles(.{
+        .files = &[_][]const u8{
+            "zstd/lib/common/debug.c",
+            "zstd/lib/common/entropy_common.c",
+            "zstd/lib/common/error_private.c",
+            "zstd/lib/common/fse_decompress.c",
+            "zstd/lib/common/pool.c",
+            "zstd/lib/common/threading.c",
+            "zstd/lib/common/xxhash.c",
+            "zstd/lib/common/zstd_common.c",
+
+            "zstd/lib/compress/fse_compress.c",
+            "zstd/lib/compress/hist.c",
+            "zstd/lib/compress/huf_compress.c",
+            "zstd/lib/compress/zstd_compress.c",
+            "zstd/lib/compress/zstd_compress_literals.c",
+            "zstd/lib/compress/zstd_compress_sequences.c",
+            "zstd/lib/compress/zstd_compress_superblock.c",
+            "zstd/lib/compress/zstd_double_fast.c",
+            "zstd/lib/compress/zstd_fast.c",
+            "zstd/lib/compress/zstd_lazy.c",
+            "zstd/lib/compress/zstd_ldm.c",
+            "zstd/lib/compress/zstdmt_compress.c",
+            "zstd/lib/compress/zstd_opt.c",
+
+            "zstd/lib/decompress/huf_decompress.c",
+            "zstd/lib/decompress/zstd_ddict.c",
+            "zstd/lib/decompress/zstd_decompress_block.c",
+            "zstd/lib/decompress/zstd_decompress.c",
+        },
+    });
+
+    const squashfuse_autogen = b.addSystemCommand(&[_][]const u8{
+        "./autogen.sh",
+    });
+    squashfuse_autogen.setCwd(b.path("squashfuse"));
+
+    const squashfuse_configure = b.addSystemCommand(&[_][]const u8{
+        "./configure",
+        "--without-zlib",
+        "--without-xz",
+        "--without-lzo",
+        "--without-lz4",
+        "--with-zstd",
+    });
+    squashfuse_configure.setCwd(b.path("squashfuse"));
+    squashfuse_configure.step.dependOn(&squashfuse_autogen.step);
+
+    const squashfuse_make_generate_swap = b.addSystemCommand(&[_][]const u8{
+        "make",
+        "swap.h.inc",
+        "swap.c.inc",
+    });
+    squashfuse_make_generate_swap.setCwd(b.path("squashfuse"));
+    squashfuse_make_generate_swap.step.dependOn(&squashfuse_configure.step);
+
+    const overlayfs_autogen = b.addSystemCommand(&[_][]const u8{
+        "./autogen.sh",
+    });
+    overlayfs_autogen.setCwd(b.path("fuse-overlayfs"));
+
+    const overlayfs_configure = b.addSystemCommand(&[_][]const u8{
+        "./configure",
+    });
+    overlayfs_configure.setCwd(b.path("fuse-overlayfs"));
+    overlayfs_configure.step.dependOn(&overlayfs_autogen.step);
+
+    const fuse_fss = b.addStaticLibrary(.{
+        .name = "fuse-overlayfs",
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    fuse_fss.addIncludePath(b.path("zstd/lib"));
+
+    fuse_fss.linkSystemLibrary("fuse3");
+    fuse_fss.addIncludePath(b.path("fuse-overlayfs"));
+    fuse_fss.addIncludePath(b.path("fuse-overlayfs/lib"));
+    fuse_fss.addCSourceFiles(.{
+        .files = &[_][]const u8{
+            "fuse-overlayfs/main.c",
+            "fuse-overlayfs/lib/hash.c",
+            "fuse-overlayfs/lib/bitrotate.c",
+            "fuse-overlayfs/utils.c",
+            "fuse-overlayfs/plugin-manager.c",
+            "fuse-overlayfs/direct.c",
+        },
+        .flags = &[_][]const u8{
+            "-Dmain=overlayfs_main",
+            // collision with libcrun
+            "-Dsafe_openat=overlayfs_safe_openat",
+            "-DPKGLIBEXECDIR=\"\"",
+            "-Wno-format",
+            "-Wno-switch",
+        },
+    });
+    fuse_fss.addCSourceFiles(.{
+        .files = &[_][]const u8{
+            "squashfuse/ll_main.c",
+            "squashfuse/ll.c",
+            "squashfuse/ll_inode.c",
+            "squashfuse/fs.c",
+            "squashfuse/fuseprivate.c",
+            "squashfuse/stat.c",
+            "squashfuse/dir.c",
+            "squashfuse/file.c",
+            "squashfuse/xattr.c",
+            "squashfuse/nonstd-enoattr.c",
+            "squashfuse/nonstd-makedev.c",
+            "squashfuse/util.c",
+            "squashfuse/nonstd-daemon.c",
+            "squashfuse/nonstd-pread.c",
+            "squashfuse/swap.c",
+            "squashfuse/table.c",
+            "squashfuse/cache_mt.c",
+            "squashfuse/decompress.c",
+            "squashfuse/nonstd-stat.c",
+        },
+        .flags = &[_][]const u8{
+            "-Dmain=squashfuse_main",
+            "-D_FILE_OFFSET_BITS=64",
+        },
+    });
+
+    fuse_fss.step.dependOn(&squashfuse_make_generate_swap.step);
+    fuse_fss.step.dependOn(&overlayfs_configure.step);
+
     const clap = b.dependency("clap", .{
         .optimize = optimize,
         .target = target,
@@ -29,6 +163,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
+
+    runtime.linkLibrary(zstd);
+    runtime.linkLibrary(fuse_fss);
 
     runtime.addIncludePath(b.path("crun"));
     runtime.addIncludePath(b.path("crun/src"));
@@ -115,36 +252,9 @@ pub fn build(b: *std.Build) void {
     });
 
     dockerc.addIncludePath(b.path("zstd/lib"));
+    dockerc.linkLibrary(zstd);
     dockerc.addCSourceFiles(.{
         .files = &[_][]const u8{
-            "zstd/lib/common/debug.c",
-            "zstd/lib/common/entropy_common.c",
-            "zstd/lib/common/error_private.c",
-            "zstd/lib/common/fse_decompress.c",
-            "zstd/lib/common/pool.c",
-            "zstd/lib/common/threading.c",
-            "zstd/lib/common/xxhash.c",
-            "zstd/lib/common/zstd_common.c",
-
-            "zstd/lib/compress/fse_compress.c",
-            "zstd/lib/compress/hist.c",
-            "zstd/lib/compress/huf_compress.c",
-            "zstd/lib/compress/zstd_compress.c",
-            "zstd/lib/compress/zstd_compress_literals.c",
-            "zstd/lib/compress/zstd_compress_sequences.c",
-            "zstd/lib/compress/zstd_compress_superblock.c",
-            "zstd/lib/compress/zstd_double_fast.c",
-            "zstd/lib/compress/zstd_fast.c",
-            "zstd/lib/compress/zstd_lazy.c",
-            "zstd/lib/compress/zstd_ldm.c",
-            "zstd/lib/compress/zstdmt_compress.c",
-            "zstd/lib/compress/zstd_opt.c",
-
-            "zstd/lib/decompress/huf_decompress.c",
-            "zstd/lib/decompress/zstd_ddict.c",
-            "zstd/lib/decompress/zstd_decompress_block.c",
-            "zstd/lib/decompress/zstd_decompress.c",
-
             "squashfs-tools/squashfs-tools/mksquashfs.c",
             "squashfs-tools/squashfs-tools/progressbar.c",
             "squashfs-tools/squashfs-tools/caches-queues-lists.c",
@@ -167,9 +277,6 @@ pub fn build(b: *std.Build) void {
         .flags = &[_][]const u8{
             // avoid collision of main function
             "-Dmain=mksquashfs_main",
-            // zstd: asm is only used for decompression so it is fine to disable
-            "-DZSTD_DISABLE_ASM",
-            // squashfs defines
             "-DZSTD_SUPPORT",
             "-D_GNU_SOURCE",
             "-DVERSION=\"dockerc\"",

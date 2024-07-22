@@ -5,13 +5,13 @@ const common = @import("common.zig");
 const mkdtemp = common.mkdtemp;
 const extract_file = common.extract_file;
 
-const squashfuse_content = @embedFile("tools/squashfuse");
-const overlayfs_content = @embedFile("tools/fuse-overlayfs");
-
 const c = @cImport({
     @cInclude("libcrun/container.h");
     @cInclude("libcrun/custom-handler.h");
 });
+
+extern fn squashfuse_main(argc: c_int, argv: [*:null]const ?[*:0]const u8) c_int;
+extern fn overlayfs_main(argc: c_int, argv: [*:null]const ?[*:0]const u8) c_int;
 
 fn getOffset(path: []const u8) !u64 {
     var file = try std.fs.cwd().openFile(path, .{});
@@ -174,12 +174,6 @@ pub fn main() !void {
     var temp_dir_path = "/tmp/dockerc-XXXXXX".*;
     try mkdtemp(&temp_dir_path);
 
-    const squashfuse_path = try extract_file(&temp_dir_path, "squashfuse", squashfuse_content, allocator);
-    defer allocator.free(squashfuse_path);
-
-    const overlayfs_path = try extract_file(&temp_dir_path, "fuse-overlayfs", overlayfs_content, allocator);
-    defer allocator.free(overlayfs_path);
-
     const filesystem_bundle_dir_null = try std.fmt.allocPrintZ(allocator, "{s}/{s}", .{ temp_dir_path, "bundle.squashfs" });
     defer allocator.free(filesystem_bundle_dir_null);
 
@@ -188,15 +182,25 @@ pub fn main() !void {
     const mount_dir_path = try std.fmt.allocPrintZ(allocator, "{s}/mount", .{temp_dir_path});
     defer allocator.free(mount_dir_path);
 
-    const offsetArg = try std.fmt.allocPrint(allocator, "offset={}", .{try getOffset(executable_path)});
+    const offsetArg = try std.fmt.allocPrintZ(allocator, "offset={}", .{try getOffset(executable_path)});
     defer allocator.free(offsetArg);
 
-    const args_buf = [_][]const u8{ squashfuse_path, "-o", offsetArg, executable_path, filesystem_bundle_dir_null };
+    const args_buf = [_:null]?[*:0]const u8{ "squashfuse", "-o", offsetArg, executable_path, filesystem_bundle_dir_null };
 
-    var mountProcess = std.process.Child.init(&args_buf, allocator);
-    _ = try mountProcess.spawnAndWait();
+    {
+        const pid = try std.posix.fork();
+        if (pid == 0) {
+            std.process.exit(@intCast(squashfuse_main(args_buf.len, &args_buf)));
+        }
 
-    const overlayfs_options = try std.fmt.allocPrint(allocator, "lowerdir={s},upperdir={s}/upper,workdir={s}/work", .{
+        const wait_pid_result = std.posix.waitpid(pid, 0);
+        if (wait_pid_result.status != 0) {
+            // TODO: extract instead of failing
+            std.debug.panic("failed to run squashfuse", .{});
+        }
+    }
+
+    const overlayfs_options = try std.fmt.allocPrintZ(allocator, "lowerdir={s},upperdir={s}/upper,workdir={s}/work", .{
         filesystem_bundle_dir_null,
         temp_dir_path,
         temp_dir_path,
@@ -212,8 +216,17 @@ pub fn main() !void {
         try tmpDir.makeDir("work");
         try tmpDir.makeDir("mount");
 
-        var overlayfsProcess = std.process.Child.init(&[_][]const u8{ overlayfs_path, "-o", overlayfs_options, mount_dir_path }, allocator);
-        _ = try overlayfsProcess.spawnAndWait();
+        const overlayfs_args = [_:null]?[*:0]const u8{ "fuse-overlayfs", "-o", overlayfs_options, mount_dir_path };
+
+        const pid = try std.posix.fork();
+        if (pid == 0) {
+            std.process.exit(@intCast(overlayfs_main(overlayfs_args.len, &overlayfs_args)));
+        }
+
+        const wait_pid_result = std.posix.waitpid(pid, 0);
+        if (wait_pid_result.status != 0) {
+            std.debug.panic("failed to run overlayfs", .{});
+        }
 
         const rootfs_absolute_path = try std.fmt.allocPrint(allocator, "{s}/mount/rootfs", .{temp_dir_path});
         defer allocator.free(rootfs_absolute_path);
