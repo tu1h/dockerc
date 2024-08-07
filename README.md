@@ -32,7 +32,7 @@ $ zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-linux-musl
 
 ## Features
 
-- [X] Compiler docker images into portable binaries
+- [X] Compile docker images into portable binaries
 - [X] Rootless containers
 - [ ] MacOS and Windows support (using QEMU)
 - [X] x86_64 support
