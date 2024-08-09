@@ -103,6 +103,44 @@ fn getContainerFromArgs(file: std.fs.File, rootfs_absolute_path: []const u8, par
                 },
                 else => return error.InvalidJSON,
             }
+
+            const linuxVal = object.getPtr("linux") orelse @panic("no linux key");
+            switch (linuxVal.*) {
+                .object => |*linux| {
+                    const uidMappingsVal = linux.getPtr("uidMappings") orelse @panic("no uidMappings key");
+                    switch (uidMappingsVal.*) {
+                        .array => |*uidMappings| {
+                            assert(uidMappings.items.len == 1);
+                            const uidMappingVal = uidMappings.getLast();
+
+                            switch (uidMappingVal) {
+                                .object => |*uidMapping| {
+                                    (uidMapping.getPtr("hostID") orelse @panic("no hostID key")).* = std.json.Value{ .integer = std.os.linux.geteuid() };
+                                },
+                                else => return error.InvalidJSON,
+                            }
+                        },
+                        else => return error.InvalidJSON,
+                    }
+
+                    const gidMappingsVal = linux.getPtr("gidMappings") orelse @panic("no gidMappings key");
+                    switch (gidMappingsVal.*) {
+                        .array => |*gidMappings| {
+                            assert(gidMappings.items.len == 1);
+                            const gidMappingVal = gidMappings.getLast();
+
+                            switch (gidMappingVal) {
+                                .object => |*gidMapping| {
+                                    (gidMapping.getPtr("hostID") orelse @panic("no hostID key")).* = std.json.Value{ .integer = std.os.linux.getegid() };
+                                },
+                                else => return error.InvalidJSON,
+                            }
+                        },
+                        else => return error.InvalidJSON,
+                    }
+                },
+                else => return error.InvalidJSON,
+            }
         },
         else => return error.InvalidJSON,
     }
@@ -256,11 +294,15 @@ pub fn main() !void {
         std.debug.panic("failed to create handler manager ({d}): {s}\n", .{ err.*.status, err.*.msg });
     }
 
+    // if XDG_RUNTIME_DIR is not set then /run/crun is used as the default which
+    // fails because most users do not have write permission there
+    assert(c.setenv("XDG_RUNTIME_DIR", "/tmp", 0) == 0);
+
     const ret = c.libcrun_container_run(&crun_context, container, 0, &err);
 
     if (ret != 0) {
         if (err != null) {
-            std.debug.panic("failed to run container ({d}): {s}\n", .{ ret, err.*.msg });
+            std.debug.panic("failed to run container (status/errno: {}) ({d}): {s}\n", .{ err.*.status, ret, err.*.msg });
         } else {
             std.debug.panic("failed to run container ({d})\n", .{ret});
         }
