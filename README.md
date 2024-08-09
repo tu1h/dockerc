@@ -14,7 +14,9 @@ Install dockerc from the [latest release](https://github.com/NilsIrl/dockerc/rel
 # Image from docker hub
 $ dockerc --image docker://oven/bun --output bun
 # Image in local docker daemon storage
-$ zig-out/bin/dockerc --image docker-daemon:mysherlock-image:latest --output sherlock_bin
+$ dockerc --image docker-daemon:mysherlock-image:latest --output sherlock_bin
+# Specify target instruction set architecture
+$ docker --image docker://hello-world --arch arm64 --output hello
 ```
 
 The output binary can then be called as you would with usual binaries. You can
@@ -28,6 +30,7 @@ Skopeo is used for loading images, for other locations refer to [its documentati
 
 ```
 $ zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-linux-musl
+$ zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-linux-musl
 ```
 
 ## Features
@@ -36,7 +39,7 @@ $ zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-linux-musl
 - [X] Rootless containers
 - [ ] MacOS and Windows support (using QEMU)
 - [X] x86_64 support
-- [ ] arm64 support
+- [X] arm64 support
 - [X] Supports arguments
 - [X] [Supports specifying environment variables using `-e`][2]
 - [X] [Supports specifying volumes using `-v`][3]
