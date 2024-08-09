@@ -13,16 +13,6 @@ const c = @cImport({
 extern fn squashfuse_main(argc: c_int, argv: [*:null]const ?[*:0]const u8) c_int;
 extern fn overlayfs_main(argc: c_int, argv: [*:null]const ?[*:0]const u8) c_int;
 
-fn getOffset(path: []const u8) !u64 {
-    var file = try std.fs.cwd().openFile(path, .{});
-    try file.seekFromEnd(-8);
-
-    var buffer: [8]u8 = undefined;
-    assert(try file.readAll(&buffer) == 8);
-
-    return std.mem.readInt(u64, buffer[0..8], std.builtin.Endian.big);
-}
-
 const eql = std.mem.eql;
 
 // inspired from std.posix.getenv
@@ -220,7 +210,7 @@ pub fn main() !void {
     const mount_dir_path = try std.fmt.allocPrintZ(allocator, "{s}/mount", .{temp_dir_path});
     defer allocator.free(mount_dir_path);
 
-    const offsetArg = try std.fmt.allocPrintZ(allocator, "offset={}", .{try getOffset(executable_path)});
+    const offsetArg = try std.fmt.allocPrintZ(allocator, "offset={}", .{try common.getOffset(executable_path)});
     defer allocator.free(offsetArg);
 
     const args_buf = [_:null]?[*:0]const u8{ "squashfuse", "-o", offsetArg, executable_path, filesystem_bundle_dir_null };

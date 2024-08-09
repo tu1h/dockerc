@@ -3,8 +3,8 @@ const std = @import("std");
 const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
 pub fn mkdtemp(in: []u8) !void {
-    try std.posix.getrandom(in[in.len - 6..]);
-    for (in[in.len - 6..]) |*v| {
+    try std.posix.getrandom(in[in.len - 6 ..]);
+    for (in[in.len - 6 ..]) |*v| {
         v.* = letters[v.* % letters.len];
     }
 
@@ -22,4 +22,14 @@ pub fn extract_file(tmpDir: []const u8, name: []const u8, data: []const u8, allo
     try file.writeAll(data);
 
     return path;
+}
+
+pub fn getOffset(path: []const u8) !u64 {
+    var file = try std.fs.cwd().openFile(path, .{});
+    try file.seekFromEnd(-8);
+
+    var buffer: [8]u8 = undefined;
+    std.debug.assert(try file.readAll(&buffer) == 8);
+
+    return std.mem.readInt(u64, buffer[0..8], std.builtin.Endian.big);
 }
