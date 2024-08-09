@@ -17,12 +17,9 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    const zstd = b.addStaticLibrary(.{
-        .name = "zstd",
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
+    const skip_crun_build = b.option(bool, "skip_crun_build", "Skip crun build") orelse false;
+
+    const zstd = b.createModule(.{});
     zstd.addAssemblyFile(b.path("zstd/lib/decompress/huf_decompress_amd64.S"));
     zstd.addCSourceFiles(.{
         .files = &[_][]const u8{
@@ -56,50 +53,37 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    const squashfuse_autogen = b.addSystemCommand(&[_][]const u8{
-        "./autogen.sh",
-    });
-    squashfuse_autogen.setCwd(b.path("squashfuse"));
-
-    const squashfuse_configure = b.addSystemCommand(&[_][]const u8{
-        "./configure",
-        "--without-zlib",
-        "--without-xz",
-        "--without-lzo",
-        "--without-lz4",
-        "--with-zstd",
-    });
-    squashfuse_configure.setCwd(b.path("squashfuse"));
-    squashfuse_configure.step.dependOn(&squashfuse_autogen.step);
-
-    const squashfuse_make_generate_swap = b.addSystemCommand(&[_][]const u8{
-        "make",
-        "swap.h.inc",
-        "swap.c.inc",
-    });
-    squashfuse_make_generate_swap.setCwd(b.path("squashfuse"));
-    squashfuse_make_generate_swap.step.dependOn(&squashfuse_configure.step);
-
-    const overlayfs_autogen = b.addSystemCommand(&[_][]const u8{
-        "./autogen.sh",
-    });
-    overlayfs_autogen.setCwd(b.path("fuse-overlayfs"));
-
-    const overlayfs_configure = b.addSystemCommand(&[_][]const u8{
-        "./configure",
-    });
-    overlayfs_configure.setCwd(b.path("fuse-overlayfs"));
-    overlayfs_configure.step.dependOn(&overlayfs_autogen.step);
-
-    const fuse_fss = b.addStaticLibrary(.{
-        .name = "fuse-overlayfs",
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
+    const fuse_fss = b.createModule(.{});
     fuse_fss.addIncludePath(b.path("zstd/lib"));
 
-    fuse_fss.linkSystemLibrary("fuse3");
+    fuse_fss.addIncludePath(b.path("libfuse/include"));
+    fuse_fss.addIncludePath(b.path("libfuse/build"));
+
+    fuse_fss.addCSourceFiles(.{
+        .files = &[_][]const u8{
+            "libfuse/lib/fuse_opt.c",
+            "libfuse/lib/helper.c",
+            "libfuse/lib/fuse_log.c",
+            "libfuse/lib/fuse_lowlevel.c",
+            "libfuse/lib/mount_util.c",
+            "libfuse/lib/fuse.c",
+            "libfuse/lib/fuse_signals.c",
+            "libfuse/lib/fuse_loop_mt.c",
+            "libfuse/lib/buffer.c",
+            "libfuse/lib/mount.c",
+            "libfuse/lib/fuse_loop.c",
+            "libfuse/lib/modules/subdir.c",
+            "libfuse/lib/modules/iconv.c",
+            "libfuse/lib/cuse_lowlevel.c",
+        },
+        .flags = &[_][]const u8{
+            // TODO: figure out where to get this value from
+            "-DFUSE_USE_VERSION=317",
+            // TODO: make sure this is correct value as well, or maybe we're supposed to dynamically link
+            "-DFUSERMOUNT_DIR=\"/usr/local/bin\"",
+        },
+    });
+
     fuse_fss.addIncludePath(b.path("fuse-overlayfs"));
     fuse_fss.addIncludePath(b.path("fuse-overlayfs/lib"));
     fuse_fss.addCSourceFiles(.{
@@ -148,33 +132,156 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    fuse_fss.step.dependOn(&squashfuse_make_generate_swap.step);
-    fuse_fss.step.dependOn(&overlayfs_configure.step);
-
     const clap = b.dependency("clap", .{
         .optimize = optimize,
         .target = target,
     });
 
-    const runtime = b.addExecutable(.{
-        .name = "runtime",
+    const squashfuse_autogen = b.addSystemCommand(&[_][]const u8{
+        "./autogen.sh",
+    });
+    squashfuse_autogen.setCwd(b.path("squashfuse"));
+
+    const squashfuse_configure = b.addSystemCommand(&[_][]const u8{
+        "./configure",
+        "--without-zlib",
+        "--without-xz",
+        "--without-lzo",
+        "--without-lz4",
+        "--with-zstd",
+    });
+    squashfuse_configure.setCwd(b.path("squashfuse"));
+    squashfuse_configure.step.dependOn(&squashfuse_autogen.step);
+
+    const squashfuse_make_generate_swap = b.addSystemCommand(&[_][]const u8{
+        "make",
+        "swap.h.inc",
+        "swap.c.inc",
+    });
+    squashfuse_make_generate_swap.setCwd(b.path("squashfuse"));
+    squashfuse_make_generate_swap.step.dependOn(&squashfuse_configure.step);
+
+    const overlayfs_autogen = b.addSystemCommand(&[_][]const u8{
+        "./autogen.sh",
+    });
+    overlayfs_autogen.setCwd(b.path("fuse-overlayfs"));
+
+    const overlayfs_configure = b.addSystemCommand(&[_][]const u8{
+        "./configure",
+    });
+    overlayfs_configure.setCwd(b.path("fuse-overlayfs"));
+    overlayfs_configure.step.dependOn(&overlayfs_autogen.step);
+
+    const libfuse_mkdir_build = b.addSystemCommand(&[_][]const u8{
+        "mkdir",
+        "-p",
+        "build",
+    });
+    libfuse_mkdir_build.setCwd(b.path("libfuse"));
+
+    const configure_libfuse = b.addSystemCommand(&[_][]const u8{
+        "meson",
+        "setup",
+        "..",
+    });
+    configure_libfuse.setCwd(b.path("libfuse/build"));
+    configure_libfuse.step.dependOn(&libfuse_mkdir_build.step);
+
+    const runtime = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
-        .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
 
-    runtime.linkLibrary(zstd);
-    runtime.linkLibrary(fuse_fss);
+    runtime.addImport("zstd", zstd);
+    runtime.addImport("fuse-overlayfs", fuse_fss);
 
     runtime.addIncludePath(b.path("crun"));
     runtime.addIncludePath(b.path("crun/src"));
     runtime.addIncludePath(b.path("crun/libocispec/src"));
-    runtime.addObjectFile(b.path("crun/.libs/libcrun.a"));
 
-    const skip_crun_build = b.option(bool, "skip_crun_build", "Skip crun build") orelse false;
+    runtime.addIncludePath(b.path("argp-standalone"));
 
-    if (!skip_crun_build) {
+    runtime.addCSourceFiles(.{
+        .files = &[_][]const u8{
+            "crun/src/libcrun/container.c",
+            "crun/src/libcrun/status.c",
+            "crun/src/libcrun/linux.c",
+            "crun/src/libcrun/utils.c",
+            "crun/src/libcrun/cgroup-utils.c",
+            "crun/src/libcrun/cgroup.c",
+            "crun/src/libcrun/intelrdt.c",
+            "crun/src/libcrun/cgroup-resources.c",
+            "crun/src/libcrun/ebpf.c",
+            "crun/src/libcrun/cgroup-cgroupfs.c",
+            "crun/src/libcrun/chroot_realpath.c",
+            "crun/src/libcrun/cloned_binary.c",
+            "crun/src/libcrun/custom-handler.c",
+            "crun/src/libcrun/terminal.c",
+            "crun/src/libcrun/cgroup-systemd.c",
+            "crun/src/libcrun/error.c",
+            "crun/src/libcrun/mount_flags.c",
+            "crun/src/libcrun/seccomp.c",
+            "crun/src/libcrun/seccomp_notify.c",
+            "crun/src/libcrun/scheduler.c",
+            "crun/src/libcrun/io_priority.c",
+            "crun/src/libcrun/cgroup-setup.c",
+            "crun/src/libcrun/signals.c",
+
+            "crun/src/libcrun/blake3/blake3.c",
+            "crun/src/libcrun/blake3/blake3_portable.c",
+
+            "crun/libocispec/src/ocispec/read-file.c",
+            "crun/libocispec/src/ocispec/json_common.c",
+            "crun/libocispec/src/ocispec/runtime_spec_schema_config_schema.c",
+            "crun/libocispec/src/ocispec/runtime_spec_schema_config_zos.c",
+            "crun/libocispec/src/ocispec/runtime_spec_schema_config_vm.c",
+            "crun/libocispec/src/ocispec/runtime_spec_schema_config_windows.c",
+            "crun/libocispec/src/ocispec/runtime_spec_schema_config_solaris.c",
+            "crun/libocispec/src/ocispec/runtime_spec_schema_config_linux.c",
+            "crun/libocispec/src/ocispec/runtime_spec_schema_defs.c",
+            "crun/libocispec/src/ocispec/runtime_spec_schema_defs_linux.c",
+            "crun/libocispec/src/ocispec/runtime_spec_schema_defs_windows.c",
+            "crun/libocispec/src/ocispec/runtime_spec_schema_defs_zos.c",
+
+            "crun/libocispec/yajl/src/yajl.c",
+            "crun/libocispec/yajl/src/yajl_gen.c",
+            "crun/libocispec/yajl/src/yajl_buf.c",
+            "crun/libocispec/yajl/src/yajl_alloc.c",
+            "crun/libocispec/yajl/src/yajl_encode.c",
+            "crun/libocispec/yajl/src/yajl_tree.c",
+            "crun/libocispec/yajl/src/yajl_parser.c",
+            "crun/libocispec/yajl/src/yajl_lex.c",
+        },
+    });
+
+    const aarch64_target = b.resolveTargetQuery(.{
+        .cpu_arch = .aarch64,
+        .abi = .musl,
+        .os_tag = .linux,
+    });
+
+    const x86_64_target = b.resolveTargetQuery(.{
+        .cpu_arch = .x86_64,
+        .abi = .musl,
+        .os_tag = .linux,
+    });
+
+    const runtime_x86_64 = b.addExecutable(.{
+        .name = "runtime_x86-64",
+        .target = x86_64_target,
+        .linkage = .static,
+    });
+
+    const runtime_aarch64 = b.addExecutable(.{
+        .name = "runtime_aarch64",
+        .target = aarch64_target,
+        .linkage = .static,
+    });
+
+    runtime_x86_64.root_module.addImport("runtime", runtime);
+    runtime_aarch64.root_module.addImport("runtime", runtime);
+
         const crun_autogen = b.addSystemCommand(&[_][]const u8{
             "./autogen.sh",
         });
@@ -190,13 +297,32 @@ pub fn build(b: *std.Build) void {
         crun_configure.setCwd(b.path("crun"));
         crun_configure.step.dependOn(&crun_autogen.step);
 
-        const crun_make = b.addSystemCommand(&[_][]const u8{
+    const libocspec_generate_files = b.addSystemCommand(&[_][]const u8{
             "make",
-            "-j",
-        });
-        crun_make.setCwd(b.path("crun"));
-        crun_make.step.dependOn(&crun_configure.step);
-        runtime.step.dependOn(&crun_make.step);
+        "src/ocispec/runtime_spec_schema_config_schema.c",
+        "src/ocispec/runtime_spec_schema_config_zos.c",
+        "src/ocispec/runtime_spec_schema_config_vm.c",
+        "src/ocispec/runtime_spec_schema_config_windows.c",
+        "src/ocispec/runtime_spec_schema_config_solaris.c",
+        "src/ocispec/runtime_spec_schema_config_linux.c",
+        "src/ocispec/runtime_spec_schema_defs.c",
+        "src/ocispec/runtime_spec_schema_defs_linux.c",
+        "src/ocispec/runtime_spec_schema_defs_windows.c",
+        "src/ocispec/runtime_spec_schema_defs_zos.c",
+    });
+    libocspec_generate_files.setCwd(b.path("crun/libocispec"));
+    libocspec_generate_files.step.dependOn(&crun_configure.step);
+
+    if (!skip_crun_build) {
+        runtime_x86_64.step.dependOn(&squashfuse_make_generate_swap.step);
+        runtime_x86_64.step.dependOn(&overlayfs_configure.step);
+        runtime_x86_64.step.dependOn(&libocspec_generate_files.step);
+        runtime_x86_64.step.dependOn(&configure_libfuse.step);
+
+        runtime_aarch64.step.dependOn(&squashfuse_make_generate_swap.step);
+        runtime_aarch64.step.dependOn(&overlayfs_configure.step);
+        runtime_aarch64.step.dependOn(&libocspec_generate_files.step);
+        runtime_aarch64.step.dependOn(&configure_libfuse.step);
     }
 
     const go_cpu_arch = switch (target.query.cpu_arch orelse target.result.cpu.arch) {
@@ -252,7 +378,7 @@ pub fn build(b: *std.Build) void {
     });
 
     dockerc.addIncludePath(b.path("zstd/lib"));
-    dockerc.linkLibrary(zstd);
+    dockerc.root_module.addImport("zstd", zstd);
     dockerc.addCSourceFiles(.{
         .files = &[_][]const u8{
             "squashfs-tools/squashfs-tools/mksquashfs.c",
@@ -290,8 +416,13 @@ pub fn build(b: *std.Build) void {
     });
 
     dockerc.root_module.addAnonymousImport(
-        "runtime",
-        .{ .root_source_file = runtime.getEmittedBin() },
+        "runtime_x86_64",
+        .{ .root_source_file = runtime_x86_64.getEmittedBin() },
+    );
+
+    dockerc.root_module.addAnonymousImport(
+        "runtime_aarch64",
+        .{ .root_source_file = runtime_aarch64.getEmittedBin() },
     );
 
     dockerc.root_module.addAnonymousImport(

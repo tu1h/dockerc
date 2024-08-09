@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const clap = @import("clap");
 const common = @import("common.zig");
@@ -14,13 +15,17 @@ const umoci_content = @embedFile("umoci");
 
 const policy_content = @embedFile("tools/policy.json");
 
-const runtime_content = @embedFile("runtime");
-
-const runtime_content_len_u64 = data: {
+fn get_runtime_content_len_u64(runtime_content: []const u8) [8]u8 {
     var buf: [8]u8 = undefined;
     std.mem.writeInt(u64, &buf, runtime_content.len, .big);
-    break :data buf;
-};
+    return buf;
+}
+
+const runtime_content_x86_64 = @embedFile("runtime_x86_64");
+const runtime_content_aarch64 = @embedFile("runtime_aarch64");
+
+const runtime_content_len_u64_x86_64 = get_runtime_content_len_u64(runtime_content_x86_64);
+const runtime_content_len_u64_aarch64 = get_runtime_content_len_u64(runtime_content_aarch64);
 
 extern fn mksquashfs_main(argc: c_int, argv: [*:null]const ?[*:0]const u8) void;
 
@@ -45,6 +50,7 @@ pub fn main() !void {
         \\-h, --help               Display this help and exit.
         \\-i, --image <str>        Image to pull.
         \\-o, --output <str>       Output file.
+        \\--arch <str>             Architecture (amd64, arm64).
         \\--rootfull               Do not use rootless container.
         \\
     );
@@ -89,7 +95,52 @@ pub fn main() !void {
     const destination_arg = try std.fmt.allocPrint(allocator, "oci:{s}/image:latest", .{temp_dir_path});
     defer allocator.free(destination_arg);
 
-    var skopeoProcess = std.process.Child.init(&[_][]const u8{ skopeo_path, "copy", "--policy", policy_path, image, destination_arg }, gpa.allocator());
+    var skopeo_args = std.ArrayList([]const u8).init(allocator);
+    defer skopeo_args.deinit();
+
+    try skopeo_args.appendSlice(&[_][]const u8{
+        skopeo_path,
+        "copy",
+        "--policy",
+        policy_path,
+    });
+
+    var runtime_content: []const u8 = undefined;
+    var runtime_content_len_u64: [8]u8 = undefined;
+
+    if (res.args.arch) |arch| {
+        try skopeo_args.append("--override-arch");
+        try skopeo_args.append(arch);
+
+        if (std.mem.eql(u8, arch, "amd64")) {
+            runtime_content = runtime_content_x86_64;
+            runtime_content_len_u64 = runtime_content_len_u64_x86_64;
+        } else if (std.mem.eql(u8, arch, "arm64")) {
+            runtime_content = runtime_content_aarch64;
+            runtime_content_len_u64 = runtime_content_len_u64_aarch64;
+        } else {
+            std.debug.panic("unsupported arch: {s}\n", .{arch});
+        }
+    } else {
+        switch (builtin.target.cpu.arch) {
+            .x86_64 => {
+                runtime_content = runtime_content_x86_64;
+                runtime_content_len_u64 = runtime_content_len_u64_x86_64;
+            },
+            .aarch64 => {
+                runtime_content = runtime_content_aarch64;
+                runtime_content_len_u64 = runtime_content_len_u64_aarch64;
+            },
+            else => {
+                std.debug.panic("unsupported arch: {}", .{builtin.target.cpu.arch});
+            },
+        }
+    }
+
+    try skopeo_args.append(image);
+    try skopeo_args.append(destination_arg);
+
+    var skopeoProcess = std.process.Child.init(skopeo_args.items, gpa.allocator());
     _ = try skopeoProcess.spawnAndWait();
 
     const umoci_image_layout_path = try std.fmt.allocPrint(allocator, "{s}/image:latest", .{temp_dir_path});
