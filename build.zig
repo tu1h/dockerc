@@ -282,23 +282,23 @@ pub fn build(b: *std.Build) void {
     runtime_x86_64.root_module.addImport("runtime", runtime);
     runtime_aarch64.root_module.addImport("runtime", runtime);
 
-        const crun_autogen = b.addSystemCommand(&[_][]const u8{
-            "./autogen.sh",
-        });
-        crun_autogen.setCwd(b.path("crun"));
+    const crun_autogen = b.addSystemCommand(&[_][]const u8{
+        "./autogen.sh",
+    });
+    crun_autogen.setCwd(b.path("crun"));
 
-        const crun_configure = b.addSystemCommand(&[_][]const u8{
-            "./configure",
-            "--enable-embedded-yajl",
-            "--disable-systemd",
-            "--disable-caps",
-            "--disable-seccomp",
-        });
-        crun_configure.setCwd(b.path("crun"));
-        crun_configure.step.dependOn(&crun_autogen.step);
+    const crun_configure = b.addSystemCommand(&[_][]const u8{
+        "./configure",
+        "--enable-embedded-yajl",
+        "--disable-systemd",
+        "--disable-caps",
+        "--disable-seccomp",
+    });
+    crun_configure.setCwd(b.path("crun"));
+    crun_configure.step.dependOn(&crun_autogen.step);
 
     const libocspec_generate_files = b.addSystemCommand(&[_][]const u8{
-            "make",
+        "make",
         "src/ocispec/runtime_spec_schema_config_schema.c",
         "src/ocispec/runtime_spec_schema_config_zos.c",
         "src/ocispec/runtime_spec_schema_config_vm.c",
@@ -437,6 +437,36 @@ pub fn build(b: *std.Build) void {
     dockerc.root_module.addImport("clap", clap.module("clap"));
 
     b.installArtifact(dockerc);
+
+    const replace_bin = b.addExecutable(.{
+        .name = "replace",
+        .root_source_file = b.path("src/replace.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    replace_bin.root_module.addAnonymousImport(
+        "runtime_x86_64",
+        .{ .root_source_file = runtime_x86_64.getEmittedBin() },
+    );
+
+    replace_bin.root_module.addAnonymousImport(
+        "runtime_aarch64",
+        .{ .root_source_file = runtime_aarch64.getEmittedBin() },
+    );
+
+    b.installArtifact(replace_bin);
+
+    const extract_bin = b.addExecutable(.{
+        .name = "extract",
+        .root_source_file = b.path("src/extract_squashfs.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    b.installArtifact(extract_bin);
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
