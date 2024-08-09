@@ -57,7 +57,7 @@ pub fn build(b: *std.Build) void {
     fuse_fss.addIncludePath(b.path("zstd/lib"));
 
     fuse_fss.addIncludePath(b.path("libfuse/include"));
-    fuse_fss.addIncludePath(b.path("libfuse/build"));
+    fuse_fss.addIncludePath(b.path("libfuse_include"));
 
     fuse_fss.addCSourceFiles(.{
         .files = &[_][]const u8{
@@ -137,6 +137,13 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
+    const cc = std.fmt.allocPrint(
+        b.allocator,
+        // TODO: find exact zig location
+        "zig cc --target={s}",
+        .{target.result.zigTriple(b.allocator) catch @panic("OOM")},
+    ) catch @panic("OOM");
+
     const squashfuse_autogen = b.addSystemCommand(&[_][]const u8{
         "./autogen.sh",
     });
@@ -172,21 +179,6 @@ pub fn build(b: *std.Build) void {
     overlayfs_configure.setCwd(b.path("fuse-overlayfs"));
     overlayfs_configure.step.dependOn(&overlayfs_autogen.step);
 
-    const libfuse_mkdir_build = b.addSystemCommand(&[_][]const u8{
-        "mkdir",
-        "-p",
-        "build",
-    });
-    libfuse_mkdir_build.setCwd(b.path("libfuse"));
-
-    const configure_libfuse = b.addSystemCommand(&[_][]const u8{
-        "meson",
-        "setup",
-        "..",
-    });
-    configure_libfuse.setCwd(b.path("libfuse/build"));
-    configure_libfuse.step.dependOn(&libfuse_mkdir_build.step);
-
     const runtime = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .link_libc = true,
@@ -195,6 +187,7 @@ pub fn build(b: *std.Build) void {
     runtime.addImport("zstd", zstd);
     runtime.addImport("fuse-overlayfs", fuse_fss);
 
+    runtime.addIncludePath(b.path("crun_include"));
     runtime.addIncludePath(b.path("crun"));
     runtime.addIncludePath(b.path("crun/src"));
     runtime.addIncludePath(b.path("crun/libocispec/src"));
@@ -297,6 +290,10 @@ pub fn build(b: *std.Build) void {
         "--disable-caps",
         "--disable-seccomp",
     });
+    crun_configure.setEnvironmentVariable(
+        "CC",
+        cc,
+    );
     crun_configure.setCwd(b.path("crun"));
     crun_configure.step.dependOn(&crun_autogen.step);
 
@@ -320,12 +317,10 @@ pub fn build(b: *std.Build) void {
         runtime_x86_64.step.dependOn(&squashfuse_make_generate_swap.step);
         runtime_x86_64.step.dependOn(&overlayfs_configure.step);
         runtime_x86_64.step.dependOn(&libocspec_generate_files.step);
-        runtime_x86_64.step.dependOn(&configure_libfuse.step);
 
         runtime_aarch64.step.dependOn(&squashfuse_make_generate_swap.step);
         runtime_aarch64.step.dependOn(&overlayfs_configure.step);
         runtime_aarch64.step.dependOn(&libocspec_generate_files.step);
-        runtime_aarch64.step.dependOn(&configure_libfuse.step);
     }
 
     const go_cpu_arch = switch (target.query.cpu_arch orelse target.result.cpu.arch) {
