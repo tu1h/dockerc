@@ -19,3 +19,9 @@
 [submodule "fuse-overlayfs"]
 	path = fuse-overlayfs
 	url = https://github.com/containers/fuse-overlayfs.git
+[submodule "libfuse"]
+	path = libfuse
+	url = https://github.com/libfuse/libfuse.git
+[submodule "argp-standalone"]
+	path = argp-standalone
+	url = https://github.com/argp-standalone/argp-standalone.git
