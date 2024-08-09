@@ -189,7 +189,6 @@ pub fn build(b: *std.Build) void {
 
     const runtime = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
-        .optimize = optimize,
         .link_libc = true,
     });
 
@@ -271,12 +270,16 @@ pub fn build(b: *std.Build) void {
         .name = "runtime_x86-64",
         .target = x86_64_target,
         .linkage = .static,
+        .optimize = optimize,
     });
 
     const runtime_aarch64 = b.addExecutable(.{
         .name = "runtime_aarch64",
         .target = aarch64_target,
         .linkage = .static,
+        // FIXME: When compiled with ReleaseSafe reading files in the overlayfs
+        // will give EINVAL (Invalid Argument)
+        .optimize = .Debug,
     });
 
     runtime_x86_64.root_module.addImport("runtime", runtime);
