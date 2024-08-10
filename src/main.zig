@@ -196,6 +196,29 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
+    {
+        // So that fuse filesystems can be mounted without needing fusermount3
+        const euid = std.os.linux.geteuid();
+        const egid = std.os.linux.getegid();
+
+        const retVal = std.os.linux.unshare(std.os.linux.CLONE.NEWUSER | std.os.linux.CLONE.NEWNS);
+        if (retVal != 0) {
+            std.debug.panic("Failed to unshare namespaces: {}", .{std.posix.errno(retVal)});
+        }
+
+        const uid_map_path = "/proc/self/uid_map";
+        const uid_map_content = try std.fmt.allocPrint(allocator, "0 {} 1", .{euid});
+        defer allocator.free(uid_map_content);
+        try std.fs.cwd().writeFile(.{ .sub_path = uid_map_path, .data = uid_map_content });
+
+        try std.fs.cwd().writeFile(.{ .sub_path = "/proc/self/setgroups", .data = "deny" });
+
+        const gid_map_path = "/proc/self/gid_map";
+        const gid_map_content = try std.fmt.allocPrint(allocator, "0 {} 1", .{egid});
+        defer allocator.free(gid_map_content);
+        try std.fs.cwd().writeFile(.{ .sub_path = gid_map_path, .data = gid_map_content });
+    }
+
     var args = std.process.args();
     const executable_path = args.next() orelse unreachable;
 
@@ -298,11 +321,12 @@ pub fn main() !void {
         }
     }
 
-    var umountOverlayProcess = std.process.Child.init(&[_][]const u8{ "umount", mount_dir_path }, allocator);
-    _ = try umountOverlayProcess.spawnAndWait();
-
-    var umountProcess = std.process.Child.init(&[_][]const u8{ "umount", filesystem_bundle_dir_null }, allocator);
-    _ = try umountProcess.spawnAndWait();
+    if (std.os.linux.umount(mount_dir_path) != 0) {
+        std.debug.print("Failed to unmount {s}\n", .{mount_dir_path});
+    }
+    if (std.os.linux.umount(filesystem_bundle_dir_null) != 0) {
+        std.debug.print("Failed to unmount {s}\n", .{filesystem_bundle_dir_null});
+    }
 
     // TODO: clean up /tmp
 }
