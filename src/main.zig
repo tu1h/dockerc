@@ -191,6 +191,44 @@ fn getContainerFromArgs(file: std.fs.File, rootfs_absolute_path: []const u8, par
     return container;
 }
 
+fn check_unprivileged_userns_permissions() void {
+    var sysctl_paths = [_]struct { path: []const u8, expected_value: u8, expected_value_is_set: bool }{
+        .{ .path = "/proc/sys/kernel/unprivileged_userns_clone", .expected_value = '1', .expected_value_is_set = true },
+        .{ .path = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns", .expected_value = '0', .expected_value_is_set = true },
+    };
+
+    for (&sysctl_paths) |*sysctl_path| {
+        if (std.fs.openFileAbsolute(sysctl_path.path, .{ .mode = .read_only })) |file| {
+            defer file.close();
+
+            var buffer: [1]u8 = undefined;
+            const bytes_read = file.readAll(&buffer) catch |err| std.debug.panic("failed reading {s}: {}", .{ sysctl_path.path, err });
+            assert(bytes_read == 1);
+
+            if (buffer[0] != sysctl_path.expected_value) {
+                sysctl_path.expected_value_is_set = false;
+            }
+        } else |err| {
+            if (err != std.fs.File.OpenError.FileNotFound) {
+                std.debug.panic("error: {}\n", .{err});
+            }
+        }
+    }
+
+    if (!(sysctl_paths[0].expected_value_is_set and sysctl_paths[1].expected_value_is_set)) {
+        std.debug.print("error: User namespace creation restricted. Run as root or disable restrictions using:\n", .{});
+        if (!sysctl_paths[0].expected_value_is_set) {
+            std.debug.print("sudo sysctl -w kernel.unprivileged_userns_clone=1\n", .{});
+        }
+
+        if (!sysctl_paths[1].expected_value_is_set) {
+            std.debug.print("sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0\n", .{});
+        }
+
+        std.posix.exit(1);
+    }
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -209,7 +247,12 @@ pub fn main() !void {
         const uid_map_path = "/proc/self/uid_map";
         const uid_map_content = try std.fmt.allocPrint(allocator, "0 {} 1", .{euid});
         defer allocator.free(uid_map_content);
-        try std.fs.cwd().writeFile(.{ .sub_path = uid_map_path, .data = uid_map_content });
+        std.fs.cwd().writeFile(.{ .sub_path = uid_map_path, .data = uid_map_content }) catch |err| {
+            if (err == std.posix.WriteError.AccessDenied) {
+                check_unprivileged_userns_permissions();
+            }
+            std.debug.panic("error: {}\n", .{err});
+        };
 
         try std.fs.cwd().writeFile(.{ .sub_path = "/proc/self/setgroups", .data = "deny" });
 
