@@ -163,7 +163,7 @@ pub fn main() !void {
     const offset_arg = try std.fmt.allocPrintZ(allocator, "{}", .{runtime_content.len});
     defer allocator.free(offset_arg);
 
-    const mksquashfs_args = [_:null]?[*:0]const u8{
+    var mksquashfs_args = [_:null]?[*:0]const u8{
         "mksquashfs",
         bundle_destination,
         output_path,
@@ -172,7 +172,16 @@ pub fn main() !void {
         "-offset",
         offset_arg,
         "-noappend",
+        "-force-uid",
+        "0",
+        "-force-gid",
+        "0",
     };
+
+    // in rootfull, do not force uid/gid to 0,0
+    if (res.args.rootfull != 0) {
+        mksquashfs_args[mksquashfs_args.len - 4] = null;
+    }
 
     mksquashfs_main(
         mksquashfs_args.len,
