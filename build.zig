@@ -247,6 +247,35 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    runtime.addIncludePath(b.dependency("shadow", .{}).path("libsubid"));
+    runtime.addIncludePath(b.dependency("shadow", .{}).path("lib"));
+    runtime.addIncludePath(b.dependency("shadow", .{}).path(""));
+
+    runtime.addCSourceFiles(.{
+        .root = b.dependency("shadow", .{}).path(""),
+        .files = &[_][]const u8{
+            "libsubid/api.c",
+            "lib/shadowlog.c",
+            "lib/subordinateio.c",
+            "lib/commonio.c",
+            "lib/write_full.c",
+            "lib/nss.c",
+            "lib/get_pid.c",
+            "lib/memzero.c",
+            "lib/alloc.c",
+            "lib/atoi/str2i.c",
+            "lib/atoi/a2i.c",
+            "lib/atoi/strtou_noneg.c",
+            "lib/atoi/strtoi.c",
+            "lib/string/sprintf.c",
+        },
+        .flags = &[_][]const u8{
+            "-DENABLE_SUBIDS",
+            // duplicate symbol with crun
+            "-Dxasprintf=shadow_xasprintf",
+        },
+    });
+
     const aarch64_target = b.resolveTargetQuery(.{
         .cpu_arch = .aarch64,
         .abi = .musl,

@@ -178,13 +178,12 @@ pub fn main() !void {
         "0",
     };
 
-    // in rootfull, do not force uid/gid to 0,0
-    if (res.args.rootfull != 0) {
-        mksquashfs_args[mksquashfs_args.len - 4] = null;
-    }
-
     mksquashfs_main(
-        mksquashfs_args.len,
+        // in rootfull, do not force uid/gid to 0,0
+        if (res.args.rootfull != 0)
+            mksquashfs_args.len - 4
+        else
+            mksquashfs_args.len,
         &mksquashfs_args,
     );
 

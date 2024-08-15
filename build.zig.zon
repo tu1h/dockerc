@@ -19,6 +19,10 @@
             .url = "https://github.com/Hejsil/zig-clap/archive/60cd46aacff4960104703da9ba683077b1e3c76c.tar.gz",
             .hash = "12205eb22c644df2469045083efe9c92189d56494ebe8901b36ef1218c3717e6eb78",
         },
+        .shadow = .{
+            .url = "https://github.com/shadow-maint/shadow/releases/download/4.15.3/shadow-4.15.3.tar.gz",
+            .hash = "12202972bc830245199eb4c5b10f853f1be094eb8c86d431299a69b1c01fa5781a7e",
+        },
     },
     .paths = .{
         // This makes *all* files, recursively, included in this package. It is generally

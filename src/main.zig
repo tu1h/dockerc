@@ -8,6 +8,7 @@ const extract_file = common.extract_file;
 const c = @cImport({
     @cInclude("libcrun/container.h");
     @cInclude("libcrun/custom-handler.h");
+    @cInclude("subid.h");
 });
 
 extern fn squashfuse_main(argc: c_int, argv: [*:null]const ?[*:0]const u8) c_int;
@@ -28,6 +29,134 @@ fn getEnvFull(key: []const u8) ?[:0]const u8 {
         return std.mem.sliceTo(line, 0);
     }
     return null;
+}
+
+const IDMapping = struct {
+    containerID: i64,
+    hostID: i64,
+    size: i64,
+
+    fn toValue(self: @This(), allocator: Allocator) !std.json.Value {
+        var object = std.json.ObjectMap.init(allocator);
+        try object.put("containerID", std.json.Value{
+            .integer = self.containerID,
+        });
+        try object.put("hostID", std.json.Value{
+            .integer = self.hostID,
+        });
+        try object.put("size", std.json.Value{
+            .integer = self.size,
+        });
+        return std.json.Value{ .object = object };
+    }
+};
+
+const IDMappings = []IDMapping;
+
+fn intToString(allocator: Allocator, v: i64) ![]u8 {
+    return std.fmt.allocPrint(allocator, "{}", .{v});
+}
+
+fn newgidmap(allocator: Allocator, pid: i64, gid_mappings: IDMappings) !void {
+    return uidgidmap_helper(allocator, "newgidmap", pid, gid_mappings);
+}
+
+fn newuidmap(allocator: Allocator, pid: i64, uid_mappings: IDMappings) !void {
+    return uidgidmap_helper(allocator, "newuidmap", pid, uid_mappings);
+}
+
+fn uidgidmap_helper(child_allocator: Allocator, helper: []const u8, pid: i64, uid_mappings: IDMappings) !void {
+    var arena = std.heap.ArenaAllocator.init(child_allocator);
+    const allocator = arena.allocator();
+    defer arena.deinit();
+
+    var argv = try std.ArrayList([]const u8).initCapacity(allocator, 2 + 3 * uid_mappings.len);
+    argv.appendAssumeCapacity(helper);
+    // TODO: specify pid using fd:N to avoid a TOCTTOU, see newuidmap(1)
+    argv.appendAssumeCapacity(try intToString(allocator, pid));
+
+    for (uid_mappings) |uid_mapping| {
+        argv.appendAssumeCapacity(try intToString(allocator, uid_mapping.containerID));
+        argv.appendAssumeCapacity(try intToString(allocator, uid_mapping.hostID));
+        argv.appendAssumeCapacity(try intToString(allocator, uid_mapping.size));
+    }
+
+    var newuidmapProcess = std.process.Child.init(argv.items, allocator);
+    switch (try newuidmapProcess.spawnAndWait()) {
+        .Exited => |status| if (status == 0) {
+            return;
+        } else {
+            std.debug.panic("newuidmap/newgidmap failed with status: {}", .{status});
+        },
+        else => |term| {
+            std.debug.panic("newuidmap/newgidmap terminated abnormally: {}", .{term});
+        },
+    }
+    return error.UidGidMapFailed;
+}
+
+const Allocator = std.mem.Allocator;
+
+fn IDMappingsToValue(allocator: Allocator, id_mappings: IDMappings) !std.json.Value {
+    var array = try std.json.Array.initCapacity(allocator, id_mappings.len);
+    for (id_mappings) |id_mapping| {
+        array.appendAssumeCapacity(try id_mapping.toValue(allocator));
+    }
+    return std.json.Value{ .array = array };
+}
+
+const IdMapParser = struct {
+    bytes: []const u8,
+    index: usize = 0,
+
+    fn nextNumber(self: *IdMapParser) ?i64 {
+        while (self.index < self.bytes.len and (self.bytes[self.index] < '0' or self.bytes[self.index] > '9')) {
+            self.index += 1;
+        }
+
+        if (self.index == self.bytes.len) {
+            return null;
+        }
+
+        const intStart = self.index;
+
+        while (self.bytes[self.index] >= '0' and self.bytes[self.index] <= '9') {
+            self.index += 1;
+
+            if (self.index == self.bytes.len) {
+                break;
+            }
+        }
+
+        return std.fmt.parseInt(i64, self.bytes[intStart..self.index], 10) catch |err| {
+            std.debug.panic("unexpected error parsing uid_map/gid_map: {}\n", .{err});
+        };
+    }
+};
+
+fn parseIdmap(allocator: Allocator, bytes: []const u8) !IDMappings {
+    var idmap_parser = IdMapParser{ .bytes = bytes };
+    var id_mappings = std.ArrayList(IDMapping).init(allocator);
+
+    while (idmap_parser.nextNumber()) |containerID| {
+        try id_mappings.append(IDMapping{
+            .containerID = containerID,
+            .hostID = idmap_parser.nextNumber() orelse std.debug.panic("must have 3 numbers\n", .{}),
+            .size = idmap_parser.nextNumber() orelse std.debug.panic("must have 3 numbers\n", .{}),
+        });
+    }
+
+    return id_mappings.toOwnedSlice();
+}
+
+fn updateIdMap(id_mappings: IDMappings) void {
+    var runningId: i64 = 0;
+
+    for (id_mappings) |*id_mapping| {
+        id_mapping.*.hostID = id_mapping.*.containerID;
+        id_mapping.*.containerID = runningId;
+        runningId += id_mapping.*.size;
+    }
 }
 
 fn getContainerFromArgs(file: std.fs.File, rootfs_absolute_path: []const u8, parentAllocator: std.mem.Allocator) ![*c]c.libcrun_container_t {
@@ -97,36 +226,24 @@ fn getContainerFromArgs(file: std.fs.File, rootfs_absolute_path: []const u8, par
             const linuxVal = object.getPtr("linux") orelse @panic("no linux key");
             switch (linuxVal.*) {
                 .object => |*linux| {
-                    const uidMappingsVal = linux.getPtr("uidMappings") orelse @panic("no uidMappings key");
-                    switch (uidMappingsVal.*) {
-                        .array => |*uidMappings| {
-                            assert(uidMappings.items.len == 1);
-                            const uidMappingVal = uidMappings.getLast();
+                    // In rootfull containers uidMappings is not set
+                    if (linux.getPtr("uidMappings")) |uidMappingsVal| {
+                        const uid_map = try std.fs.cwd().readFileAlloc(allocator, "/proc/self/uid_map", 1000000);
+                        const uidMappings = try parseIdmap(allocator, uid_map);
 
-                            switch (uidMappingVal) {
-                                .object => |*uidMapping| {
-                                    (uidMapping.getPtr("hostID") orelse @panic("no hostID key")).* = std.json.Value{ .integer = std.os.linux.geteuid() };
-                                },
-                                else => return error.InvalidJSON,
-                            }
-                        },
-                        else => return error.InvalidJSON,
+                        updateIdMap(uidMappings);
+
+                        uidMappingsVal.* = try IDMappingsToValue(allocator, uidMappings);
                     }
 
-                    const gidMappingsVal = linux.getPtr("gidMappings") orelse @panic("no gidMappings key");
-                    switch (gidMappingsVal.*) {
-                        .array => |*gidMappings| {
-                            assert(gidMappings.items.len == 1);
-                            const gidMappingVal = gidMappings.getLast();
+                    // In rootfull containers gidMappings is not set
+                    if (linux.getPtr("gidMappings")) |gidMappingsVal| {
+                        const gid_map = try std.fs.cwd().readFileAlloc(allocator, "/proc/self/gid_map", 1000000);
+                        const gidMappings = try parseIdmap(allocator, gid_map);
 
-                            switch (gidMappingVal) {
-                                .object => |*gidMapping| {
-                                    (gidMapping.getPtr("hostID") orelse @panic("no hostID key")).* = std.json.Value{ .integer = std.os.linux.getegid() };
-                                },
-                                else => return error.InvalidJSON,
-                            }
-                        },
-                        else => return error.InvalidJSON,
+                        updateIdMap(gidMappings);
+
+                        gidMappingsVal.* = try IDMappingsToValue(allocator, gidMappings);
                     }
                 },
                 else => return error.InvalidJSON,
@@ -229,37 +346,143 @@ fn check_unprivileged_userns_permissions() void {
     }
 }
 
-pub fn main() !void {
+fn umount(path: [*:0]const u8) void {
+    const umountRet: i64 = @bitCast(std.os.linux.umount(path));
+    if (umountRet != 0) {
+        assert(umountRet < 0 and umountRet > -4096);
+        const errno: std.posix.E = @enumFromInt(-umountRet);
+        std.debug.panic("Failed to unmount {s}. Errno: {}\n", .{ path, errno });
+    }
+}
+
+pub fn main() !u8 {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    {
+    // TODO: consider the case where a user can mount the filesystem but isn't root
+    // We might only need to check for CAP_SYS_ADMIN
+    // Also in the case where fusermount3 is present this is unnecessary
+    const euid = std.os.linux.geteuid();
+    if (euid != 0) {
         // So that fuse filesystems can be mounted without needing fusermount3
-        const euid = std.os.linux.geteuid();
+
         const egid = std.os.linux.getegid();
 
-        const retVal = std.os.linux.unshare(std.os.linux.CLONE.NEWUSER | std.os.linux.CLONE.NEWNS);
-        if (retVal != 0) {
-            std.debug.panic("Failed to unshare namespaces: {}", .{std.posix.errno(retVal)});
+        const username = try allocator.dupeZ(u8, std.mem.span((std.c.getpwuid(euid) orelse @panic("couldn't get username")).pw_name orelse @panic("couldn't get username")));
+        defer allocator.free(username);
+
+        var subuid_ranges: [*]c.subid_range = undefined;
+        var subgid_ranges: [*]c.subid_range = undefined;
+
+        var uid_mappings = std.ArrayList(IDMapping).init(allocator);
+        defer uid_mappings.deinit();
+
+        try uid_mappings.append(IDMapping{
+            .containerID = 0,
+            .hostID = euid,
+            .size = 1,
+        });
+
+        var gid_mappings = std.ArrayList(IDMapping).init(allocator);
+        defer gid_mappings.deinit();
+
+        try gid_mappings.append(IDMapping{
+            .containerID = 0,
+            .hostID = egid,
+            .size = 1,
+        });
+
+        const subuid_ranges_len = c.subid_get_uid_ranges(username, @ptrCast(&subuid_ranges));
+        const subgid_ranges_len = c.subid_get_gid_ranges(username, @ptrCast(&subgid_ranges));
+
+        if (subuid_ranges_len > 0) {
+            for (0..@intCast(subuid_ranges_len)) |i| {
+                try uid_mappings.append(IDMapping{
+                    .containerID = @intCast(subuid_ranges[i].start),
+                    .hostID = @intCast(subuid_ranges[i].start),
+                    .size = @intCast(subuid_ranges[i].count),
+                });
+            }
         }
 
-        const uid_map_path = "/proc/self/uid_map";
-        const uid_map_content = try std.fmt.allocPrint(allocator, "0 {} 1", .{euid});
-        defer allocator.free(uid_map_content);
-        std.fs.cwd().writeFile(.{ .sub_path = uid_map_path, .data = uid_map_content }) catch |err| {
-            if (err == std.posix.WriteError.AccessDenied) {
-                check_unprivileged_userns_permissions();
+        if (subgid_ranges_len > 0) {
+            for (0..@intCast(subgid_ranges_len)) |i| {
+                try gid_mappings.append(IDMapping{
+                    .containerID = @intCast(subgid_ranges[i].start),
+                    .hostID = @intCast(subgid_ranges[i].start),
+                    .size = @intCast(subgid_ranges[i].count),
+                });
             }
-            std.debug.panic("error: {}\n", .{err});
-        };
+        }
 
-        try std.fs.cwd().writeFile(.{ .sub_path = "/proc/self/setgroups", .data = "deny" });
+        const pipe = try std.posix.pipe();
+        const read_fd = pipe[0];
+        const write_fd = pipe[1];
 
-        const gid_map_path = "/proc/self/gid_map";
-        const gid_map_content = try std.fmt.allocPrint(allocator, "0 {} 1", .{egid});
-        defer allocator.free(gid_map_content);
-        try std.fs.cwd().writeFile(.{ .sub_path = gid_map_path, .data = gid_map_content });
+        const pid: i64 = @bitCast(std.os.linux.clone2(std.os.linux.CLONE.NEWUSER | std.os.linux.CLONE.NEWNS | std.os.linux.SIG.CHLD, 0));
+        if (pid < 0) {
+            std.debug.panic("failed to clone process: {}\n", .{std.posix.errno(pid)});
+        }
+
+        if (pid > 0) {
+            std.posix.close(read_fd);
+            // inside parent process
+
+            const set_groups_file = try std.fmt.allocPrint(allocator, "/proc/{}/setgroups", .{pid});
+            defer allocator.free(set_groups_file);
+
+            newuidmap(allocator, pid, uid_mappings.items) catch {
+                std.debug.print("newuidmap failed, falling back to single user mapping\n", .{});
+                const uid_map_path = try std.fmt.allocPrint(allocator, "/proc/{}/uid_map", .{pid});
+                defer allocator.free(uid_map_path);
+
+                const uid_map_content = try std.fmt.allocPrint(allocator, "0 {} 1", .{euid});
+                defer allocator.free(uid_map_content);
+                std.fs.cwd().writeFile(.{ .sub_path = uid_map_path, .data = uid_map_content }) catch |err| {
+                    if (err == std.posix.WriteError.AccessDenied) {
+                        // TODO: when using newuidmap this may not get hit until
+                        // trying to mount file system
+                        check_unprivileged_userns_permissions();
+                    }
+                    std.debug.panic("error: {}\n", .{err});
+                };
+            };
+
+            newgidmap(allocator, pid, gid_mappings.items) catch {
+                std.debug.print("newgidmap failed, falling back to single group mapping\n", .{});
+
+                // must be set for writing to gid_map to succeed (see user_namespaces(7))
+                // otherwise we want to leave it untouched so that setgroups can be used in the container
+                try std.fs.cwd().writeFile(.{ .sub_path = set_groups_file, .data = "deny" });
+
+                const gid_map_path = try std.fmt.allocPrint(allocator, "/proc/{}/gid_map", .{pid});
+                defer allocator.free(gid_map_path);
+
+                const gid_map_content = try std.fmt.allocPrint(allocator, "0 {} 1", .{egid});
+                defer allocator.free(gid_map_content);
+                std.fs.cwd().writeFile(.{ .sub_path = gid_map_path, .data = gid_map_content }) catch |err| {
+                    if (err == std.posix.WriteError.AccessDenied) {
+                        check_unprivileged_userns_permissions();
+                    }
+                    std.debug.panic("error: {}\n", .{err});
+                };
+            };
+
+            std.posix.close(write_fd);
+            const wait_result = std.posix.waitpid(@intCast(pid), 0);
+            if (std.os.linux.W.IFEXITED(wait_result.status)) {
+                return std.os.linux.W.EXITSTATUS(wait_result.status);
+            }
+            std.debug.panic("did not exit normally status: {}\n", .{wait_result.status});
+        }
+
+        std.posix.close(write_fd);
+
+        var buf: [1]u8 = undefined;
+        const bytes_read = try std.posix.read(read_fd, &buf);
+        assert(bytes_read == 0);
+        std.posix.close(read_fd);
     }
 
     var args = std.process.args();
@@ -312,12 +535,18 @@ pub fn main() !void {
 
         const overlayfs_args = [_:null]?[*:0]const u8{ "fuse-overlayfs", "-o", overlayfs_options, mount_dir_path };
 
+        // reap the child of fuse-overlayfs so that we can be sure fuse-overlayfs
+        // has exited before unmounting squashfuse
+        assert(try std.posix.prctl(std.posix.PR.SET_CHILD_SUBREAPER, .{1}) == 0);
         const pid = try std.posix.fork();
         if (pid == 0) {
-            std.process.exit(@intCast(overlayfs_main(overlayfs_args.len, &overlayfs_args)));
+            _ = overlayfs_main(overlayfs_args.len, &overlayfs_args);
+            std.debug.panic("unreachable", .{});
         }
 
         const wait_pid_result = std.posix.waitpid(pid, 0);
+        assert(try std.posix.prctl(std.posix.PR.SET_CHILD_SUBREAPER, .{0}) == 0);
+
         if (wait_pid_result.status != 0) {
             std.debug.panic("failed to run overlayfs", .{});
         }
@@ -354,22 +583,36 @@ pub fn main() !void {
     // fails because most users do not have write permission there
     assert(c.setenv("XDG_RUNTIME_DIR", "/tmp", 0) == 0);
 
-    const ret = c.libcrun_container_run(&crun_context, container, 0, &err);
+    const pid = try std.posix.fork();
+    assert(pid >= 0);
+    if (pid == 0) {
+        // Run container in a separate process because crun will try to reap
+        // every child including the fuse-overlayfs process still running
+        const ret = c.libcrun_container_run(&crun_context, container, 0, &err);
 
-    if (ret != 0) {
         if (err != null) {
             std.debug.panic("failed to run container (status/errno: {}) ({d}): {s}\n", .{ err.*.status, ret, err.*.msg });
-        } else {
-            std.debug.panic("failed to run container ({d})\n", .{ret});
         }
+
+        return @intCast(ret);
     }
 
-    if (std.os.linux.umount(mount_dir_path) != 0) {
-        std.debug.print("Failed to unmount {s}\n", .{mount_dir_path});
-    }
-    if (std.os.linux.umount(filesystem_bundle_dir_null) != 0) {
-        std.debug.print("Failed to unmount {s}\n", .{filesystem_bundle_dir_null});
+    const retStatus = std.posix.waitpid(pid, 0);
+    if (!std.posix.W.IFEXITED(retStatus.status)) {
+        std.debug.panic("container didn't exist normally : {}\n", .{retStatus.status});
     }
 
-    // TODO: clean up /tmp
+    umount(mount_dir_path);
+
+    // wait for overlayfs process to finish so that device is not busy to unmount squashfuse
+    const overlayfs_status = std.posix.waitpid(-1, 0);
+    if (!std.posix.W.IFEXITED(overlayfs_status.status) or std.posix.W.EXITSTATUS(overlayfs_status.status) != 0) {
+        std.debug.panic("overlayfs failed to exit successfully, status: {}\n", .{overlayfs_status.status});
+    }
+
+    umount(filesystem_bundle_dir_null);
+
+    try std.fs.deleteTreeAbsolute(&temp_dir_path);
+
+    return std.posix.W.EXITSTATUS(retStatus.status);
 }
