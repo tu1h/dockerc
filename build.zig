@@ -373,7 +373,13 @@ pub fn build(b: *std.Build) void {
         "-o",
     });
     umoci.setCwd(b.path("umoci"));
-    const umoci_output = umoci.addOutputFileArg("umoci");
+    const umoci_output = umoci.addOutputFileArg(
+        std.fmt.allocPrint(
+            b.allocator,
+            "umoci_{s}",
+            .{go_cpu_arch},
+        ) catch @panic("OOM"),
+    );
     umoci.addArg("github.com/opencontainers/umoci/cmd/umoci");
     umoci.setEnvironmentVariable(
         "CGO_ENABLED",
@@ -392,7 +398,13 @@ pub fn build(b: *std.Build) void {
         "-o",
     });
     skopeo.setCwd(b.path("skopeo"));
-    const skopeo_output = skopeo.addOutputFileArg("skopeo");
+    const skopeo_output = skopeo.addOutputFileArg(
+        std.fmt.allocPrint(
+            b.allocator,
+            "skopeo_{s}",
+            .{go_cpu_arch},
+        ) catch @panic("OOM"),
+    );
     skopeo.addArg("./cmd/skopeo");
 
     skopeo.setEnvironmentVariable(
