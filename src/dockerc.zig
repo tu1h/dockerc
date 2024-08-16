@@ -113,7 +113,6 @@ pub fn main() !void {
     });
 
     var runtime_content: []const u8 = undefined;
-    var runtime_content_len_u64: [8]u8 = undefined;
 
     if (res.args.arch) |arch| {
         try skopeo_args.append("--override-arch");
@@ -121,10 +120,8 @@ pub fn main() !void {
 
         if (std.mem.eql(u8, arch, "amd64")) {
             runtime_content = runtime_content_x86_64;
-            runtime_content_len_u64 = runtime_content_len_u64_x86_64;
         } else if (std.mem.eql(u8, arch, "arm64")) {
             runtime_content = runtime_content_aarch64;
-            runtime_content_len_u64 = runtime_content_len_u64_aarch64;
         } else {
             std.debug.panic("unsupported arch: {s}\n", .{arch});
         }
@@ -132,11 +129,9 @@ pub fn main() !void {
         switch (builtin.target.cpu.arch) {
             .x86_64 => {
                 runtime_content = runtime_content_x86_64;
-                runtime_content_len_u64 = runtime_content_len_u64_x86_64;
             },
             .aarch64 => {
                 runtime_content = runtime_content_aarch64;
-                runtime_content_len_u64 = runtime_content_len_u64_aarch64;
             },
             else => {
                 std.debug.panic("unsupported arch: {}", .{builtin.target.cpu.arch});
@@ -201,6 +196,11 @@ pub fn main() !void {
 
     try file.writeAll(runtime_content);
     try file.seekFromEnd(0);
-    try file.writeAll(&runtime_content_len_u64);
+
+    try common.writeFooter(file, common.Footer{
+        .offset = runtime_content.len,
+        .require_mapped_uids = false,
+    });
+
     try file.chmod(0o755);
 }

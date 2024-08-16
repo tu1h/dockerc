@@ -11,7 +11,7 @@ pub fn main() !void {
 
     if (rawPath) |path| {
         if (rawPathOutput) |path_output| {
-            const offset = try common.getOffset(path);
+            const offset = (try common.getFooter(path)).offset;
 
             const readFile = try std.fs.cwd().openFile(path, .{});
             const writeFile = try std.fs.cwd().createFile(path_output, .{});
@@ -22,7 +22,11 @@ pub fn main() !void {
             assert(len_to_write == len_written);
 
             try writeFile.seekFromEnd(0);
-            try writeFile.writeAll(&runtimes.runtime_content_len_u64_x86_64);
+
+            try common.writeFooter(writeFile, common.Footer{
+                .offset = runtimes.runtime_content_x86_64.len,
+            });
+
             try writeFile.chmod(0o755);
 
             writeFile.close();

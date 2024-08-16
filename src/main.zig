@@ -507,7 +507,8 @@ pub fn main() !u8 {
     const mount_dir_path = try std.fmt.allocPrintZ(allocator, "{s}/mount", .{temp_dir_path});
     defer allocator.free(mount_dir_path);
 
-    const offsetArg = try std.fmt.allocPrintZ(allocator, "offset={}", .{try common.getOffset(executable_path)});
+    const footer = try common.getFooter(executable_path);
+    const offsetArg = try std.fmt.allocPrintZ(allocator, "offset={}", .{footer.offset});
     defer allocator.free(offsetArg);
 
     const args_buf = [_:null]?[*:0]const u8{ "squashfuse", "-o", offsetArg, executable_path, filesystem_bundle_dir_null };

@@ -1,6 +1,14 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+const native_endian = builtin.target.cpu.arch.endian();
+
+pub const Footer = extern struct {
+    offset: u64,
+    // TODO: make use of this field, currently ignored
+    require_mapped_uids: bool = false,
+};
 
 pub fn mkdtemp(in: []u8) !void {
     try std.posix.getrandom(in[in.len - 6 ..]);
@@ -24,12 +32,26 @@ pub fn extract_file(tmpDir: []const u8, name: []const u8, data: []const u8, allo
     return path;
 }
 
-pub fn getOffset(path: []const u8) !u64 {
+pub fn getFooter(path: []const u8) !Footer {
     var file = try std.fs.cwd().openFile(path, .{});
-    try file.seekFromEnd(-8);
+    try file.seekFromEnd(-@sizeOf(Footer));
 
-    var buffer: [8]u8 = undefined;
-    std.debug.assert(try file.readAll(&buffer) == 8);
+    var footer: Footer = undefined;
+    std.debug.assert(try file.readAll(std.mem.asBytes(&footer)) == @sizeOf(Footer));
 
-    return std.mem.readInt(u64, buffer[0..8], std.builtin.Endian.big);
+    if (native_endian != std.builtin.Endian.little) {
+        std.mem.byteSwapAllFields(Footer, footer[0]);
+    }
+
+    return footer;
+}
+
+pub fn writeFooter(file: std.fs.File, footer: Footer) !void {
+    comptime std.debug.assert(@typeInfo(Footer).Struct.layout != .auto);
+
+    if (native_endian != std.builtin.Endian.little) {
+        std.mem.byteSwapAllFields(Footer, &footer);
+    }
+
+    try file.writeAll(std.mem.asBytes(&footer));
 }

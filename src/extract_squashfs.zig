@@ -8,7 +8,7 @@ pub fn main() !void {
 
     if (args.next()) |dockercGeneratedBinary| {
         if (args.next()) |squashfsOutput| {
-            const offset = try common.getOffset(dockercGeneratedBinary);
+            const offset = (try common.getFooter(dockercGeneratedBinary)).offset;
 
             const readFile = try std.fs.cwd().openFile(dockercGeneratedBinary, .{});
             const writeFile = try std.fs.cwd().createFile(squashfsOutput, .{});
