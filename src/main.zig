@@ -1,6 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const common = @import("common.zig");
+const build_info = @import("build_info");
 
 const mkdtemp = common.mkdtemp;
 const extract_file = common.extract_file;
@@ -356,6 +357,16 @@ fn umount(path: [*:0]const u8) void {
 }
 
 pub fn main() !u8 {
+    var args = std.process.args();
+    const executable_path = args.next() orelse @panic("unreachable: there must be a executable name");
+
+    while (args.next()) |arg| {
+        if (eql(u8, arg, "--dockerc-version")) {
+            std.debug.print("dockerc version: {s}\n", .{build_info.dockerc_version});
+            return 0;
+        }
+    }
+
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -484,9 +495,6 @@ pub fn main() !u8 {
         assert(bytes_read == 0);
         std.posix.close(read_fd);
     }
-
-    var args = std.process.args();
-    const executable_path = args.next() orelse unreachable;
 
     var temp_dir_path = "/tmp/dockerc-XXXXXX".*;
     try mkdtemp(&temp_dir_path);

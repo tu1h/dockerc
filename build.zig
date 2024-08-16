@@ -18,6 +18,10 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const skip_crun_build = b.option(bool, "skip_crun_build", "Skip crun build") orelse false;
+    const dockerc_version = b.option([]const u8, "dockerc_version", "Set dockerc version") orelse "HEAD";
+
+    const build_info = b.addOptions();
+    build_info.addOption([]const u8, "dockerc_version", dockerc_version);
 
     const zstd = b.createModule(.{});
     zstd.addAssemblyFile(b.path("zstd/lib/decompress/huf_decompress_amd64.S"));
@@ -183,6 +187,8 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .link_libc = true,
     });
+
+    runtime.addOptions("build_info", build_info);
 
     runtime.addImport("zstd", zstd);
     runtime.addImport("fuse-overlayfs", fuse_fss);
@@ -403,6 +409,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
+
+    dockerc.root_module.addOptions("build_info", build_info);
 
     dockerc.addIncludePath(b.path("zstd/lib"));
     dockerc.root_module.addImport("zstd", zstd);

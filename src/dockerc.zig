@@ -2,6 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const clap = @import("clap");
 const common = @import("common.zig");
+const build_info = @import("build_info");
 
 const mkdtemp = common.mkdtemp;
 const extract_file = common.extract_file;
@@ -48,6 +49,7 @@ pub fn main() !void {
 
     const params = comptime clap.parseParamsComptime(
         \\-h, --help               Display this help and exit.
+        \\--version                Display dockerc version.
         \\-i, --image <str>        Image to pull.
         \\-o, --output <str>       Output file.
         \\--arch <str>             Architecture (amd64, arm64).
@@ -65,6 +67,11 @@ pub fn main() !void {
         return err;
     };
     defer res.deinit();
+
+    if (res.args.version != 0) {
+        std.debug.print("dockerc version: {s}\n", .{build_info.dockerc_version});
+        return;
+    }
 
     if (res.args.help != 0) {
         try clap.help(io.getStdErr().writer(), clap.Help, &params, .{});
