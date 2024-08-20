@@ -143,9 +143,11 @@ pub fn build(b: *std.Build) void {
 
     const cc = std.fmt.allocPrint(
         b.allocator,
-        // TODO: find exact zig location
-        "zig cc --target={s}",
-        .{target.result.zigTriple(b.allocator) catch @panic("OOM")},
+        "{s} cc --target={s}",
+        .{
+            b.graph.zig_exe,
+            target.result.zigTriple(b.allocator) catch @panic("OOM"),
+        },
     ) catch @panic("OOM");
 
     const squashfuse_autogen = b.addSystemCommand(&[_][]const u8{
@@ -284,27 +286,25 @@ pub fn build(b: *std.Build) void {
 
     const aarch64_target = b.resolveTargetQuery(.{
         .cpu_arch = .aarch64,
-        .abi = .musl,
+        .abi = target.result.abi,
         .os_tag = .linux,
     });
 
     const x86_64_target = b.resolveTargetQuery(.{
         .cpu_arch = .x86_64,
-        .abi = .musl,
+        .abi = target.result.abi,
         .os_tag = .linux,
     });
 
     const runtime_x86_64 = b.addExecutable(.{
         .name = "runtime_x86-64",
         .target = x86_64_target,
-        .linkage = .static,
         .optimize = optimize,
     });
 
     const runtime_aarch64 = b.addExecutable(.{
         .name = "runtime_aarch64",
         .target = aarch64_target,
-        .linkage = .static,
         // FIXME: When compiled with ReleaseSafe reading files in the overlayfs
         // will give EINVAL (Invalid Argument)
         .optimize = .Debug,
